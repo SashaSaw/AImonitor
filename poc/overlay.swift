@@ -447,34 +447,98 @@ final class Controller: NSObject, NSTextFieldDelegate, NSSoundDelegate {
         }
     }
 
+    func ttyDevice(_ t: String) -> String { t.hasPrefix("/dev/") ? String(t.dropFirst(5)) : t }
+    func ttyPath(_ t: String) -> String { t.hasPrefix("/dev/") ? t : "/dev/" + t }
+
     func focusTerminal(_ s: Session) {
-        // 1. if it's in tmux, switch tmux to that pane and target the attached client
-        var clientPIDs: [Int] = []
+        // Decide the TERMINAL-WINDOW tty (not the agent's pane pty) and the owning app.
+        var targetTTY = s.tty
+        var appPathStr: String?
+
         if !s.tmux.isEmpty, tmuxPath != nil {
-            runTmux(["select-window", "-t", s.tmux])
+            runTmux(["select-window", "-t", s.tmux])   // switch tmux to the right pane
             runTmux(["select-pane", "-t", s.tmux])
             let session = tmuxCapture(["display-message", "-pt", s.tmux, "#{session_name}"])
             if !session.isEmpty {
-                clientPIDs = tmuxCapture(["list-clients", "-t", session, "-F", "#{client_pid}"])
-                    .split(whereSeparator: \.isNewline).compactMap { Int($0) }
+                // the attached client's tty IS the terminal window hosting this tmux
+                if let first = tmuxCapture(["list-clients", "-t", session, "-F", "#{client_tty}\t#{client_pid}"])
+                    .split(whereSeparator: \.isNewline).first {
+                    let parts = first.split(separator: "\t")
+                    if parts.count >= 1 { targetTTY = String(parts[0]) }
+                    if parts.count >= 2, let pid = Int(parts[1]) { appPathStr = appPath(forPID: pid) }
+                }
             }
         }
-        // 2. otherwise seed from the terminal's tty
-        var seedPIDs = clientPIDs
-        if seedPIDs.isEmpty, !s.tty.isEmpty {
-            seedPIDs = capture("/bin/ps", ["-t", s.tty, "-o", "pid="])
-                .split(whereSeparator: \.isNewline)
-                .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        if appPathStr == nil, !targetTTY.isEmpty {
+            let pids = capture("/bin/ps", ["-t", ttyDevice(targetTTY), "-o", "pid="])
+                .split(whereSeparator: \.isNewline).compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            for pid in pids { if let a = appPath(forPID: pid) { appPathStr = a; break } }
         }
-        // 3. resolve the owning .app and bring it forward with `open` (reliable from a bg app)
-        var resolved: String?
-        for pid in seedPIDs { if let app = appPath(forPID: pid) { resolved = app; break } }
-        focusLog("dblclick id=\(s.id) tmux=\(s.tmux) tty=\(s.tty) clients=\(clientPIDs) seeds=\(seedPIDs) app=\(resolved ?? "nil")")
-        if let app = resolved {
-            _ = capture("/usr/bin/open", [app])
+
+        let appName = appPathStr.map { ($0 as NSString).lastPathComponent } ?? ""
+        var method = "open"
+        // Precisely raise the exact window/tab by tty where the app supports it.
+        if !targetTTY.isEmpty, appName == "Terminal.app", raiseAppleTab(app: "Terminal", tty: targetTTY) {
+            method = "applescript:Terminal"
+        } else if !targetTTY.isEmpty, appName == "iTerm.app", raiseAppleTab(app: "iTerm", tty: targetTTY) {
+            method = "applescript:iTerm"
+        } else if let app = appPathStr {
+            _ = capture("/usr/bin/open", [app])   // fallback: front the app (right window not guaranteed)
         } else {
+            method = "none"
             NSSound.beep()
         }
+        focusLog("dblclick id=\(s.id) tmux=\(s.tmux) tty=\(targetTTY) app=\(appName) method=\(method)")
+    }
+
+    // Bring the exact tab/window with this tty to the front (Terminal.app / iTerm).
+    // Needs one-time Automation permission (System Settings ▸ Privacy ▸ Automation).
+    func raiseAppleTab(app: String, tty: String) -> Bool {
+        let dev = ttyPath(tty)
+        let script: String
+        if app == "iTerm" {
+            script = """
+            tell application "iTerm"
+              repeat with w in windows
+                try
+                  repeat with t in tabs of w
+                    repeat with ss in sessions of t
+                      if tty of ss is "\(dev)" then
+                        select w
+                        tell t to select
+                        tell ss to select
+                        activate
+                        return "ok"
+                      end if
+                    end repeat
+                  end repeat
+                end try
+              end repeat
+            end tell
+            return "no"
+            """
+        } else {
+            // `try` per window: some Terminal windows (Settings/inspector) have no
+            // `tabs` and would otherwise abort the whole search with error -1728.
+            script = """
+            tell application "Terminal"
+              activate
+              repeat with w in windows
+                try
+                  repeat with t in tabs of w
+                    if tty of t is "\(dev)" then
+                      set selected of t to true
+                      set frontmost of w to true
+                      return "ok"
+                    end if
+                  end repeat
+                end try
+              end repeat
+            end tell
+            return "no"
+            """
+        }
+        return capture("/usr/bin/osascript", ["-e", script]).contains("ok")
     }
 
     // MARK: actions
