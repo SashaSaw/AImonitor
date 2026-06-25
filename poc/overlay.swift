@@ -589,37 +589,42 @@ final class Controller: NSObject, NSTextFieldDelegate, NSSoundDelegate {
     // shell, or no agent process left on its tty). Self-healing: if we're wrong,
     // the next hook event re-creates the file.
     func pruneDeadSessions() {
+        let now = Date().timeIntervalSince1970
         let shells: Set<String> = ["zsh", "-zsh", "bash", "-bash", "sh", "fish", "-fish",
                                    "login", "tmux", "screen", "dash"]
-        var paneCmd: [String: String] = [:]
+
+        // tmux pane set — best-effort, only a fallback for sessions with no tty.
+        var panes: Set<String> = []
         var havePanes = false
         if tmuxPath != nil {
-            let out = tmuxCapture(["list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_command}"])
+            let out = tmuxCapture(["list-panes", "-a", "-F", "#{pane_id}"])
             if !out.isEmpty {
                 havePanes = true
-                for line in out.split(whereSeparator: \.isNewline) {
-                    let parts = line.split(separator: "\t", maxSplits: 1)
-                    if parts.count == 2 { paneCmd[String(parts[0])] = String(parts[1]).lowercased() }
-                }
+                panes = Set(out.split(whereSeparator: \.isNewline).map(String.init))
             }
         }
+
         for s in sessions {
+            // Never prune a recently-active session: if it's still firing hooks
+            // it's obviously alive. Also prevents any appear/disappear flicker.
+            if now - s.updatedAt < 15 { continue }
+
             var dead = false
-            if !s.tmux.isEmpty {
-                if havePanes {
-                    if let cmd = paneCmd[s.tmux] { dead = shells.contains(cmd) }  // back to a shell ⇒ agent gone
-                    else { dead = true }                                          // pane no longer exists
-                }
-            } else if !s.tty.isEmpty {
+            if !s.tty.isEmpty {
+                // `ps` reads the kernel proc table (no tmux socket needed), so this
+                // is reliable even from a GUI/launchd app — and the tty is the pane
+                // pty for tmux agents, so it covers both cases.
                 let comms = capture("/bin/ps", ["-t", s.tty, "-o", "comm="])
                     .split(whereSeparator: \.isNewline)
                     .map { ($0 as NSString).lastPathComponent.lowercased() }
-                if comms.isEmpty { dead = true }                                  // terminal tab closed
-                else { dead = !comms.contains { !shells.contains($0) } }          // only shells left
+                dead = comms.isEmpty ? true : !comms.contains { !shells.contains($0) }
+            } else if !s.tmux.isEmpty, havePanes {
+                dead = !panes.contains(s.tmux)   // pane no longer exists
             }
+
             if dead {
-                let path = (sessionsDir as NSString).appendingPathComponent(safeName(s.id) + ".json")
-                try? FileManager.default.removeItem(atPath: path)
+                try? FileManager.default.removeItem(
+                    atPath: (sessionsDir as NSString).appendingPathComponent(safeName(s.id) + ".json"))
             }
         }
     }

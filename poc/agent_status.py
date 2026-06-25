@@ -123,10 +123,13 @@ def main():
         "updated_at": time.time(),
         "needs_attention": state in ("waiting", "done"),
     }
-    tmp = path + ".tmp"
+    tmp = "%s.tmp.%d" % (path, os.getpid())   # unique per process: no concurrent-hook race
     with open(tmp, "w") as f:
         json.dump(rec, f)
     os.replace(tmp, path)  # atomic
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        pass  # a status hook must never fail (or block) the agent
