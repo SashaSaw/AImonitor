@@ -1,0 +1,11 @@
+# Build artifacts
+poc/aimonitor-overlay
+poc/AImonitor.app/
+*.o
+*.dSYM/
+
+# macOS
+.DS_Store
+
+# Local config backups created by wire_hooks.py
+*.aimonitor-bak
