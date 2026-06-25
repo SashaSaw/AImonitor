@@ -781,5 +781,15 @@ final class Controller: NSObject, NSTextFieldDelegate, NSSoundDelegate {
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+
+// Single instance: if another copy is already running (e.g. clicked again in the
+// Dock, or login + manual launch), just exit so we don't stack overlays.
+if let bid = NSRunningApplication.current.bundleIdentifier {
+    let mypid = NSRunningApplication.current.processIdentifier
+    let dupes = NSWorkspace.shared.runningApplications
+        .filter { $0.bundleIdentifier == bid && $0.processIdentifier != mypid }
+    if !dupes.isEmpty { exit(0) }
+}
+
 let controller = Controller()
 app.run()
