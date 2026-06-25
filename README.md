@@ -117,10 +117,13 @@ and a *Glass* when it's **done**. Active states make no sound.
   and the right pane for tmux).
 - **Drag a row** → reorder it. **Drag the header** → move the whole panel. Your
   order and position persist across restarts.
-- **Right-click a row** → *Jump to…*, *Remove from list*, *Volume*, *Quit*.
+- **Right-click a row** → *Jump to…*, *Remove from list*, *Volume*, *Launch at
+  Login*, *Quit*.
   - **Volume**: Mute / 25 / 50 / 75 / 100% — plays a preview, persists.
   - **Remove from list**: dismiss a row you're done with (reappears only if that
     agent does something again).
+  - **Launch at Login**: start the overlay automatically when you log in
+    (uses `SMAppService`; works best with the app in `/Applications`).
 
 ### Custom agent icons
 

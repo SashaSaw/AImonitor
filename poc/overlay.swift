@@ -9,6 +9,7 @@
 // Run:    ./aimonitor-overlay      (or build the .app with package.sh)
 
 import AppKit
+import ServiceManagement
 
 // MARK: - Model
 
@@ -644,9 +645,28 @@ final class Controller: NSObject, NSTextFieldDelegate, NSSoundDelegate {
         let volItem = NSMenuItem(title: "Volume", action: nil, keyEquivalent: "")
         volItem.submenu = volMenu
         m.addItem(volItem)
+        let launch = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        launch.target = self
+        launch.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        m.addItem(launch)
         m.addItem(.separator())
         m.addItem(withTitle: "Quit AImonitor", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return m
+    }
+
+    @objc func toggleLaunchAtLogin(_ item: NSMenuItem) {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            let a = NSAlert()
+            a.messageText = "Couldn't change Launch at Login"
+            a.informativeText = "\(error.localizedDescription)\n\nIf this keeps happening, move AImonitor.app to /Applications and try again."
+            a.runModal()
+        }
     }
 
     @objc func menuJump(_ item: NSMenuItem) {
