@@ -9,10 +9,12 @@ Codex CLI:   passes the event JSON as the final ARG, or via its own fields.
              Call (hooks.json): ... --agent codex --event <Name>
              Call (notify):     ... --agent codex          (event from payload "type")
 
-Session key priority (so multiple terminals on one project stay distinct):
-  1. $TMUX_PANE        — stable + doubles as the click/send target
-  2. the agent's own session id (from payload or env)
-  3. the controlling terminal's TTY  — unique per Terminal/iTerm tab
+Session key priority (so multiple terminals on one project stay distinct,
+and one terminal tab stays ONE row even when the agent's session id changes —
+e.g. Codex/Claude `clear` starts a fresh session id but the same tab continues):
+  1. $TMUX_PANE        — stable per pane + doubles as the click/send target
+  2. the controlling terminal's TTY  — unique + stable per Terminal/iTerm tab
+  3. the agent's own session id (from payload or env)  — ttyless fallback
   4. parent pid         — last resort
 
 Set AIMONITOR_DEBUG=1 to append a diagnostic line per call to
@@ -93,12 +95,16 @@ def main():
                   or data.get("conversation_id") or data.get("conversationId")
                   or os.environ.get("CODEX_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID") or "")
     tty = get_tty()
-    sid = tmux or session_id or (("tty-" + tty) if tty else "") or ("pid-%s" % os.getppid())
+    # Key by terminal tab before session id, so a `clear` (which mints a new
+    # session id but keeps the same tab) continues the SAME row instead of
+    # spawning a second one that never gets pruned while the agent is alive.
+    sid = tmux or (("tty-" + tty) if tty else "") or session_id or ("pid-%s" % os.getppid())
 
     cwd = data.get("cwd") or os.environ.get("PWD") or os.getcwd()
     base = os.path.basename(cwd.rstrip("/")) or cwd
-    # short, unique-per-terminal tag so two rows on the same project differ
-    tag = tmux or (("…" + session_id[-4:]) if session_id else "") or tty
+    # short, unique-per-terminal tag so two rows on the same project differ;
+    # tty first (matches the key) keeps the title stable across a `clear`.
+    tag = tmux or tty or (("…" + session_id[-4:]) if session_id else "")
     title = (base + " " + tag).strip() if tag else base
 
     debug("%s agent=%s event=%s state=%s sid=%s tmux=%s tty=%s keys=%s argv=%s" % (
